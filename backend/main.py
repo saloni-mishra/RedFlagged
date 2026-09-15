@@ -87,7 +87,7 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://red-flagged-ky28ev809-zenith-e6a3.vercel.app",
+        "https://red-flagged-je48ylwgk-zenith-e6a3.vercel.app",
         "http://localhost:5173",
     ],
     allow_credentials=True,
