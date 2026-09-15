@@ -5,7 +5,13 @@ def analyze_rules(text: str) -> dict:
     score = 0
 
     # 1. Urgent deadline / coercion
-    urgency_matches = re.findall(r'\b(immediate|within \d+ hours?|today|urgent|warrant|arrest)\b', text, re.I)
+    urgency_pattern = re.compile(r'\b(immediate|within \d+ hours?|today|urgent|warrant|arrest)\b', re.I)
+    negation_pattern = re.compile(r"\b(no|not|none|without|isn't|doesn't)\b", re.I)
+    urgency_matches = []
+    for match in urgency_pattern.finditer(text):
+        preceding_words = re.findall(r"\b[\w']+\b", text[:match.start()])[-3:]
+        if not negation_pattern.search(" ".join(preceding_words)):
+            urgency_matches.append(match.group(1))
     urgency_triggered = bool(urgency_matches)
     if urgency_triggered:
         flags.append("High-pressure urgency or threat indicators detected.")

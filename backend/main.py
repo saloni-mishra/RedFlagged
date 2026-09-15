@@ -152,6 +152,17 @@ def run_analysis(text: str = Form(...)):
 Analyze the following notice for indicators of scam,
 impersonation, or coercive patterns.
 
+IMPORTANT INTERPRETATION GUIDANCE:
+Do not treat widely-known, reputable domains (e.g. google.com, github.com,
+microsoft.com, amazon.com, apple.com) as inherently suspicious or as signs
+of impersonation just because they are mentioned. Only flag a domain as
+suspicious if there is a concrete reason in the message itself — such as a
+misspelled/lookalike domain, a URL shortener, or the domain being paired
+with a request for payment, OTP, or login credentials. If a message
+explicitly states there is no urgency or no payment required, do not
+describe this as a "contradiction" unless the deterministic rule checks
+also independently confirm urgency or payment indicators are present.
+
 MESSAGE CONTENT:
 {text}
 
