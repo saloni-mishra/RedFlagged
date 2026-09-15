@@ -87,9 +87,10 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://red-flagged-je48ylwgk-zenith-e6a3.vercel.app",
+        "https://red-flagged-nu.vercel.app",
         "http://localhost:5173",
     ],
+    allow_origin_regex=r"https://red-flagged.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
