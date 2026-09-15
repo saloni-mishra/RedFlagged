@@ -32,7 +32,15 @@ def analyze_rules(text: str) -> dict:
 
     # 3. Suspicious / Non-official link
     urls = re.findall(r'https?://\S+', text)
-    suspicious_urls = [u for u in urls if not (".gov.in" in u or ".nic.in" in u or ".ac.in" in u)]
+    link_candidates = re.findall(
+        r'(?:https?://\S+|\b(?:bit\.ly|tinyurl\.com|is\.gd|t\.co|cutt\.ly)/\S+)',
+        text,
+        re.I,
+    )
+    suspicious_urls = [
+        u for u in link_candidates
+        if not (".gov.in" in u or ".nic.in" in u or ".ac.in" in u)
+    ]
     if suspicious_urls:
         flags.append(f"Non-governmental/unverified external link found: {suspicious_urls[0]}")
         score += 25
