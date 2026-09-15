@@ -120,8 +120,17 @@ Set the backend API URL the frontend points to (via an env variable or config fi
 - The numeric risk score (rule engine) and the risk level label (Gemini) are generated independently and don't currently follow a fixed mapping, so a given score can appear alongside a risk level that doesn't obviously match it. Aligning these more tightly is a priority fix.
 - OCR accuracy depends on image quality — low-resolution or angled screenshots may need manual correction in the editable text step
 - The knowledge base currently covers a curated set of common scam scenarios, not an exhaustive list
-- The rule engine checks a fixed set of warning-sign patterns rather than a learned model, so it won't automatically generalize to wording it wasn't designed around
+- The rule engine checks a fixed set of warning-sign patterns rather than a learned model, so it won't automatically generalize to wording it wasn't designed around — though situation classification (via Gemini) has generalized correctly in testing to scenario types outside the four built-in UI categories
 - Currently English-only
+
+## Testing & validation
+
+We tested RedFlagged against multiple scenario types, including ones outside the four built-in quick-select categories, and against a deliberately benign message to check for false positives. Two issues surfaced and were fixed during this process:
+
+- **False positive on a benign message.** An early version of the rule engine matched urgency keywords (e.g. "urgent") without checking for negation, so a message stating *"there is no urgent deadline"* was incorrectly flagged. Fixed by adding negation-aware matching (a rule no longer triggers if a negation word appears in the few words preceding the keyword), and by instructing Gemini not to treat well-known domains as inherently suspicious or invent a "contradiction" narrative unless the rule engine independently confirms a real indicator. Verified: the same message now correctly returns LOW risk, 0/100, with no fabricated narrative.
+- **Missed shortened-URL links.** The rule engine's link check only matched full `http(s)://` URLs, missing shortened links like `bit.ly/...` used in a customs/courier phishing test message. Fixed by extending the pattern to also match common shortener domains without a scheme. Verified: the same message now correctly triggers the "Suspicious external link" rule alongside the pre-existing urgency detection.
+
+Both fixes were confirmed not to affect true positives — a refund/UPI scam and a government-impersonation scam continued to be correctly flagged as HIGH risk after the changes.
 
 ## Roadmap (not yet built)
 
