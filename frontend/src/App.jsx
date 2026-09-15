@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { AlertTriangle, CheckCircle, ShieldAlert, FileText, ArrowRight, Loader2 } from 'lucide-react';
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = "https://redflagged-hd8a.onrender.com";
 
 const DEMO_EXAMPLES = {
   "Government impersonation": "URGENT: This is the Income Tax Department. Your PAN will be suspended today unless you verify your details immediately at https://example.com/verify.",
