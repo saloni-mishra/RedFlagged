@@ -6,3 +6,4 @@ google-genai
 pypdf
 pillow
 python-multipart
+Levenshtein

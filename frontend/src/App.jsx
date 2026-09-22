@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AlertTriangle, CheckCircle, ShieldAlert, FileText, ArrowRight, Loader2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle, ShieldAlert, FileText, ArrowRight, Loader2, Share2, Volume2 } from 'lucide-react';
 
 const API_BASE = "https://redflagged-hd8a.onrender.com";
 
@@ -126,6 +126,32 @@ export default function App() {
     }
   };
 
+  // 1. WhatsApp / SMS Sharing Utility
+  const handleShareWarning = () => {
+    if (!results) return;
+    const score = results.calculated_score ?? results.rule_score ?? "N/A";
+    const level = results.risk_level ?? "SUSPICIOUS";
+    const situation = results.situation_type ?? "Scam / Coercion Notice";
+    const summary = results.summary ?? "Warning signs detected.";
+    
+    const message = `⚠️ *RedFlagged Verification Alert*\n\n*Type:* ${situation}\n*Risk:* ${level} (${score}/100)\n*Summary:* ${summary}\n\n*Safety Advice:* Do not pay or click unverified links. Verify directly through official portals.`;
+
+    navigator.clipboard.writeText(message);
+    alert("Warning summary copied to clipboard! You can paste it into WhatsApp or SMS.");
+  };
+
+  // 2. Browser-native Text-to-Speech Accessibility
+  const handleReadAloud = () => {
+    if (!results || !('speechSynthesis' in window)) {
+      alert("Text-to-speech is not supported on this browser.");
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const textToRead = `Risk assessment: ${results.risk_level} risk. Score is ${results.calculated_score} out of 100. ${results.situation_type}. ${results.summary}`;
+    const utterance = new SpeechSynthesisUtterance(textToRead);
+    window.speechSynthesis.speak(utterance);
+  };
+
   return (
     <div
       className="min-h-screen text-[#1b1a18] font-sans p-5 md:p-10"
@@ -203,8 +229,29 @@ export default function App() {
         {/* Results Screen */}
         {results && (
           <section className="bg-[#faf8f3] p-6 rounded-sm border border-[#cfc5b6] space-y-7">
+            
+            {/* Sticky summary bar with Quick Share and Voice buttons */}
             <div className={`sticky top-3 z-10 flex flex-wrap items-center justify-between gap-3 bg-[#faf8f3] p-3 rounded-sm border ${riskStyles.border}`}>
-              <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#625d55]">Results summary</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[#625d55]">Results summary</span>
+                <button
+                  type="button"
+                  onClick={handleReadAloud}
+                  className="p-1 rounded-sm border border-[#cfc5b6] hover:bg-[#f1ece3] text-[#27558a] transition"
+                  title="Read assessment aloud"
+                >
+                  <Volume2 className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleShareWarning}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-sm border border-[#b9c8d8] bg-[#edf2f7] text-[#27558a] text-[11px] font-medium hover:bg-[#e2eaf2] transition"
+                  title="Copy formatted warning for WhatsApp or SMS"
+                >
+                  <Share2 className="w-3 h-3" /> Share
+                </button>
+              </div>
+
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
                 <span className={`px-2 py-1 rounded-sm border font-semibold ${riskStyles.badge}`}>
                   {results.risk_level} risk
@@ -362,33 +409,33 @@ export default function App() {
               </h3>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="p-4 bg-[#faf8f3] rounded-sm border border-[#cfc5b6]">
-                <h4 className="text-xs font-bold text-[#2b2926] uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                  <CheckCircle className="w-4 h-4 text-[#52765d]" /> Recommended Safe Steps
-                </h4>
-                <ul className="text-xs text-[#625d55] space-y-1.5 list-disc pl-4">
-                  {results.safe_next_steps.map((step, idx) => (
-                    <li key={idx}>{step}</li>
-                  ))}
-                </ul>
-              </div>
+                <div className="p-4 bg-[#faf8f3] rounded-sm border border-[#cfc5b6]">
+                  <h4 className="text-xs font-bold text-[#2b2926] uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                    <CheckCircle className="w-4 h-4 text-[#52765d]" /> Recommended Safe Steps
+                  </h4>
+                  <ul className="text-xs text-[#625d55] space-y-1.5 list-disc pl-4">
+                    {results.safe_next_steps.map((step, idx) => (
+                      <li key={idx}>{step}</li>
+                    ))}
+                  </ul>
+                </div>
 
-              <div className="p-4 bg-[#faf8f3] rounded-sm border border-[#cfc5b6]">
-                <h4 className="text-xs font-bold text-[#2b2926] uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                  <AlertTriangle className="w-4 h-4 text-[#a96d27]" /> Official Verification Guidance
-                </h4>
-                <ul className="text-xs text-[#625d55] space-y-1.5 list-disc pl-4">
-                  {results.verification_guidance.map((guide, idx) => (
-                    <li key={idx}>{guide}</li>
-                  ))}
-                </ul>
-              </div>
+                <div className="p-4 bg-[#faf8f3] rounded-sm border border-[#cfc5b6]">
+                  <h4 className="text-xs font-bold text-[#2b2926] uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-[#a96d27]" /> Official Verification Guidance
+                  </h4>
+                  <ul className="text-xs text-[#625d55] space-y-1.5 list-disc pl-4">
+                    {results.verification_guidance.map((guide, idx) => (
+                      <li key={idx}>{guide}</li>
+                    ))}
+                  </ul>
+                </div>
               </div>
             </div>
 
             {/* Regulatory Disclaimer */}
             <div className="p-3 bg-[#f7efdf] border border-[#d5b477] rounded-sm text-[#76501f] text-[11px] leading-relaxed">
-              <strong>Disclaimer:</strong> {results.disclaimer || "NoticeGuard analyzes structural patterns, payment coercion indicators, and public domain institutional communication protocols. It provides risk mitigation steps rather than legally binding authenticity determinations."}
+              <strong>Disclaimer:</strong> {results.disclaimer || "RedFlagged analyzes structural patterns, payment coercion indicators, and public domain institutional communication protocols. It provides risk mitigation steps rather than legally binding authenticity determinations."}
             </div>
           </section>
         )}
