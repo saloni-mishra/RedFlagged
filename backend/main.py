@@ -2,7 +2,7 @@ import os
 import io
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, UploadFile, File, Form,HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -12,7 +12,7 @@ from google.genai import types
 
 from pypdf import PdfReader
 from PIL import Image
-import pytesseract
+
 
 from rules import analyze_rules
 from knowledge import retrieve_context
@@ -121,19 +121,24 @@ async def extract_text(
 
         if file.filename and file.filename.lower().endswith(".pdf"):
             reader = PdfReader(io.BytesIO(content))
-
-            extracted = "".join(
-                page.extract_text() or ""
-                for page in reader.pages
-            )
-
+            extracted = "".join(page.extract_text() or "" for page in reader.pages)
             return {"text": extracted.strip()}
 
         else:
-            image = Image.open(io.BytesIO(content))
-            extracted = pytesseract.image_to_string(image)
-
-            return {"text": extracted.strip()}
+            try:
+                image = Image.open(io.BytesIO(content))
+                response = client.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=[
+                        image,
+                        "Extract and transcribe all readable text from this image verbatim. Return only the extracted text and nothing else.",
+                    ],
+                )
+                extracted_text = response.text.strip() if response.text else ""
+                return {"text": extracted_text}
+            except Exception as e:
+                print(f"Extraction failed: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
 
     return {"text": ""}
 
