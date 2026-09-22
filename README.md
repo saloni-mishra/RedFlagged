@@ -64,7 +64,7 @@ The UI also offers a few quick-select sample categories (Government impersonatio
 |---|---|
 | Frontend | React + Vite, Tailwind CSS |
 | Backend | Python, FastAPI |
-| OCR | Tesseract (`pytesseract`) |
+| OCR | Tesseract  |
 | PDF extraction | `pypdf` |
 | LLM | Google Gemini API (`google-genai`, structured JSON output) |
 | Hosting | Vercel (frontend), Render (backend) |
