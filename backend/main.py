@@ -76,6 +76,10 @@ class NoticeAnalysisResponse(BaseModel):
     safe_next_steps: list[str]
     verification_guidance: list[str]
     disclaimer: str
+    amounts: list[str] = Field(default_factory=list)
+    payment_handles: list[str] = Field(default_factory=list)
+    urgency_phrases: list[str] = Field(default_factory=list)
+    extracted_urls: list[str] = Field(default_factory=list)
 
 
 # -----------------------------
@@ -205,4 +209,8 @@ Return the result using the required JSON schema.
         safe_next_steps=gemini_result.safe_next_steps,
         verification_guidance=gemini_result.verification_guidance,
         disclaimer=gemini_result.disclaimer,
+        amounts=rule_results["amounts"],
+        payment_handles=rule_results["payment_handles"],
+        urgency_phrases=rule_results["urgency_phrases"],
+        extracted_urls=rule_results["extracted_urls"],
     )
