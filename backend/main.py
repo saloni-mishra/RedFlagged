@@ -200,7 +200,7 @@ Return the result using the required JSON schema.
 
     gemini_result = GeminiAnalysisResponse.model_validate_json(response.text)
     return NoticeAnalysisResponse(
-        risk_level=rule_results["risk_level"],,
+        risk_level=rule_results["risk_level"],
         calculated_score=rule_results["rule_score"],
         rule_breakdown=[RuleBreakdown(**item) for item in rule_results["rule_breakdown"]],
         summary=gemini_result.summary,
