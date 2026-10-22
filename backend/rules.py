@@ -170,6 +170,16 @@ def calculate_calibrated_score(raw_points: int) -> tuple[int, str]:
   return score, level
 
 
+def _keyword_matches(text: str, pattern: re.Pattern, negation_pattern: re.Pattern) -> list[str]:
+  """Return matched keywords unless a negation word appears in the few words before the match."""
+  matches = []
+  for match in pattern.finditer(text):
+    preceding_words = re.findall(r"\b[\w']+\b", text[: match.start()])[-3:]
+    if not negation_pattern.search(" ".join(preceding_words)):
+      matches.append(match.group(0))
+  return matches
+
+
 def analyze_rules(text: str) -> dict:
   raw_points = 0
   active_flags = []
@@ -188,11 +198,7 @@ def analyze_rules(text: str) -> dict:
       r"\b(no|not|none|without|isn't|doesn't|never|cannot)\b", re.I
   )
 
-  urgency_matches = []
-  for match in urgency_pattern.finditer(text):
-    preceding_words = re.findall(r"\b[\w']+\b", text[: match.start()])[-3:]
-    if not negation_pattern.search(" ".join(preceding_words)):
-      urgency_matches.append(match.group(1))
+  urgency_matches = _keyword_matches(text, urgency_pattern, negation_pattern)
 
   urgency_triggered = bool(urgency_matches)
   urgency_weight = 35 if urgency_triggered else 0
@@ -277,7 +283,81 @@ def analyze_rules(text: str) -> dict:
     )
 
   # =========================================================================
-  # 4. Synthesize Saturating Score and Breakdown
+  # 4. OTP / Aadhaar / credential harvesting
+  # =========================================================================
+  credential_pattern = re.compile(
+      r"\b("
+      r"otp|one[- ]time password|verification code|mpin|m[- ]?pin|"
+      r"aadhaar|aadhar|uidai|"
+      r"share (?:your )?(?:otp|pin|password|mpin)|"
+      r"send (?:the )?(?:otp|verification code)|"
+      r"confirm (?:your )?otp|"
+      r"verify (?:your )?(?:aadhaar|aadhar|kyc)|"
+      r"e[- ]?kyc|complete (?:your )?kyc|"
+      r"(?:photo|copy|scan) of (?:your )?(?:aadhaar|aadhar|pan)"
+      r")\b",
+      re.I,
+  )
+  credential_matches = _keyword_matches(text, credential_pattern, negation_pattern)
+  credential_triggered = bool(credential_matches)
+  credential_weight = 35 if credential_triggered else 0
+  raw_points += credential_weight
+  if credential_triggered:
+    active_flags.append(
+        "Request to share OTP, Aadhaar, or other sensitive credentials detected."
+    )
+
+  # =========================================================================
+  # 5. Courier / customs impersonation
+  # =========================================================================
+  courier_pattern = re.compile(
+      r"\b("
+      r"customs (?:fee|duty|clearance|charge)|"
+      r"clearance (?:fee|charge|payment)|"
+      r"consignment (?:held|blocked|detained|seized)|"
+      r"parcel (?:held|detained|on hold|blocked)|"
+      r"international (?:parcel|shipment|package).{0,40}(?:fee|customs|clearance|pay)|"
+      r"(?:pay|deposit).{0,30}(?:customs|clearance) (?:fee|charge)|"
+      r"courier (?:clearance|customs) (?:fee|charge)"
+      r")\b",
+      re.I,
+  )
+  courier_matches = courier_pattern.findall(text)
+  courier_triggered = bool(courier_matches)
+  courier_weight = 30 if courier_triggered else 0
+  raw_points += courier_weight
+  if courier_triggered:
+    active_flags.append(
+        "Courier or customs hold / clearance-fee pattern typical of parcel scams."
+    )
+
+  # =========================================================================
+  # 6. Job / recruitment / prize lure
+  # =========================================================================
+  job_pattern = re.compile(
+      r"\b("
+      r"work from home|wfh|"
+      r"earn ₹?\s*[\d,]+ (?:daily|per day|per week)|"
+      r"(?:job|interview|registration|processing) fee|"
+      r"pay (?:to )?(?:join|register|apply|start)|"
+      r"whatsapp (?:job|interview|task|recruitment)|"
+      r"task[- ]based (?:job|earning|work)|"
+      r"you (?:have )?(?:been )?selected for (?:a )?job|"
+      r"(?:won|winner).{0,25}(?:prize|lottery|reward)"
+      r")\b",
+      re.I,
+  )
+  job_matches = job_pattern.findall(text)
+  job_triggered = bool(job_matches)
+  job_weight = 30 if job_triggered else 0
+  raw_points += job_weight
+  if job_triggered:
+    active_flags.append(
+        "Job, recruitment, or prize-lure language common in employment fraud."
+    )
+
+  # =========================================================================
+  # 7. Synthesize Saturating Score and Breakdown
   # =========================================================================
   calibrated_score, risk_level = calculate_calibrated_score(raw_points)
 
@@ -317,6 +397,39 @@ def analyze_rules(text: str) -> dict:
                   if suspicious_urls
                   else "No deceptive or unverified links found."
               )
+          ),
+      },
+      {
+          "rule": "OTP, Aadhaar, or credential request",
+          "points": credential_weight,
+          "triggered": credential_triggered,
+          "evidence": ", ".join(dict.fromkeys(credential_matches)),
+          "explanation": (
+              "Message asks for or references sharing OTP, Aadhaar, KYC, or similar secrets."
+              if credential_triggered
+              else "No OTP, Aadhaar, or credential-harvesting language found."
+          ),
+      },
+      {
+          "rule": "Courier or customs hold scam",
+          "points": courier_weight,
+          "triggered": courier_triggered,
+          "evidence": ", ".join(dict.fromkeys(courier_matches)),
+          "explanation": (
+              "Parcel/customs hold or clearance-fee wording common in courier impersonation scams."
+              if courier_triggered
+              else "No courier or customs clearance scam patterns found."
+          ),
+      },
+      {
+          "rule": "Job or recruitment scam lure",
+          "points": job_weight,
+          "triggered": job_triggered,
+          "evidence": ", ".join(dict.fromkeys(job_matches)),
+          "explanation": (
+              "Work-from-home, paid registration, or prize/job lure language detected."
+              if job_triggered
+              else "No job recruitment or prize-lure patterns found."
           ),
       },
   ]
