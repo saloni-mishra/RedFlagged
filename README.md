@@ -104,12 +104,31 @@ The **risk-level label** is derived from the same numeric score using fixed thre
 red-flagged/
 ├── frontend/          # React + Vite + Tailwind frontend
 ├── backend/
-│   ├── main.py        # FastAPI routes and Gemini integration
+│   ├── main.py        # FastAPI routes, Gemini integration, backup mode
 │   ├── rules.py       # Deterministic risk-scoring engine
-│   └── knowledge.py   # Knowledge base and retrieval logic
+│   ├── knowledge.py   # Knowledge base and retrieval logic
+│   └── t.py           # Regression tests: 30 sample messages with expected risk levels
 ├── knowledge/         # Curated knowledge and scenario files
+├── docs/
+│   └── TECHNICAL_DESIGN.md   # Architecture, diagrams, scoring, API contract
+├── LICENSE
 └── README.md
 ```
+
+## Documentation
+
+- [Technical Design Document](docs/TECHNICAL_DESIGN.md): architecture diagrams, request flow, scoring design, API contract, deployment and limitations.
+- [Sample data and test cases](backend/t.py): 30 invented messages in Hindi, Hinglish and English, with the risk level each one should produce. See "Testing and validation" below for how to run them.
+
+## Environment variables
+
+| Variable | Where | Required | Purpose |
+|---|---|---|---|
+| `GEMINI_API_KEY` | `backend/.env` (or the hosting platform's settings) | Yes | Google Gemini API key |
+| `GEMINI_MODEL` | `backend/.env` | No | Gemini model name (default `gemini-2.5-flash`) |
+| `VITE_API_URL` | `frontend/.env.local` (or Vercel settings) | Yes for the frontend | Backend URL, e.g. `http://127.0.0.1:8000` locally |
+
+Create `backend/.env` and `frontend/.env.local` yourself and fill in your own values. Never commit them.
 
 ## Running locally
 
@@ -209,9 +228,18 @@ Vite will print the local development URL in the terminal.
 | `/api/extract-text` | POST | Accepts supported file or text input and returns extracted text. |
 | `/api/analyze` | POST | Accepts message text and returns the structured risk assessment. |
 
-The exact request and response formats depend on the current implementation in `backend/main.py`.
+Both endpoints take form fields (`text` for analysis; `file` or `raw_text` for extraction). The full response format is documented in the [Technical Design Document](docs/TECHNICAL_DESIGN.md#7-api-contract).
 
 ## Testing and validation
+
+To run the regression tests:
+
+```bash
+cd backend
+python t.py
+```
+
+`t.py` holds 30 sample messages (Hindi, Hinglish and English scams, genuine notices, and everyday messages that must stay LOW). For each one it prints the score, risk level, language and triggered rules, and marks it `OK` or `FAIL` against the expected level. The last line, `failures: 0`, means everything passed. The script tests the rule engine only and does not call Gemini, so it needs no API key and uses no quota.
 
 Testing covered multiple message categories, including scenarios outside the built-in sample categories, and a deliberately benign message intended to test false-positive behavior.
 
@@ -247,7 +275,7 @@ The negation and shortened-URL changes were also checked against tested refund/U
 
 **Change:** Hindi-safe word boundaries were introduced, the three overlapping negation checks were replaced by one clause-limited check, and Hindi and Hinglish patterns for payment, OTP, courier and job-fee scams were added. Generic words that flagged ordinary messages were tightened.
 
-**Observed result:** A regression script of 30 messages (Hindi, Hinglish and English scams, genuine notices, and everyday messages that must stay LOW) passes. A Hindi fake-job message asking for a security fee now returns HIGH (82/100) with a Hindi explanation.
+**Observed result:** The 30-message regression script `backend/t.py` (Hindi, Hinglish and English scams, genuine notices, and everyday messages that must stay LOW) passes. A Hindi fake-job message asking for a security fee now returns HIGH (82/100) with a Hindi explanation.
 
 These are observed test results, not a claim of exhaustive validation across all possible messages.
 
@@ -257,13 +285,14 @@ These are observed test results, not a claim of exhaustive validation across all
 - **Curated domain coverage:** Lookalike-domain detection depends partly on the institutional domains included in the curated list. Unlisted institutions may not receive the same name-similarity checks.
 - **Rule coverage:** The rule engine only detects patterns for which checks have been implemented. A message can contain warning signs that the current rules do not recognize.
 - **AI limitations:** Gemini may misinterpret ambiguous messages or produce incorrect explanations. Results should not be treated as definitive proof of fraud or authenticity.
-- **Language support:** English and Hindi (Devanagari) are supported. Roman-script Hindi (Hinglish) is detected by the rules, but the explanation is produced in English.
+- **Language support:** English and Hindi (Devanagari) are supported. Roman-script Hindi (Hinglish) is detected by the rules, but the explanation is produced in English. Gujarati is not supported yet.
 - **Read-aloud voices:** Reading aloud uses the browser's built-in voices. A Hindi voice must be installed on the user's device; otherwise the browser may fall back to another voice or stay silent.
 - **Backup mode is less detailed:** When Gemini is unavailable, the explanation is fixed text based on the rule results rather than a message-specific AI explanation.
 - **Verification is not automatic authentication:** Retrieved institutional context can guide users toward safer verification, but it does not independently authenticate the submitted document.
 
 ## Roadmap
 
+- Add Gujarati analysis and output, and better handling of Roman-script Hindi.
 - Expand the knowledge base to cover financial fraud, phishing, and fraudulent job or internship offers.
 - Add a transparency panel explaining triggered rule weights and the knowledge sources used.
 - Expand testing with more benign, ambiguous, and malicious examples to assess false positives and false negatives.
