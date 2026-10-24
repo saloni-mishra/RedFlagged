@@ -28,11 +28,16 @@ __pycache__/
 *.pyo
 
 # Virtual environments
-backend/venv/
 venv/
 .venv/
+env/
+backend/venv/
+backend/venv_broken_backup/
 
-# Environment variables / secrets
+# Environment secrets
 .env
 .env.*
 !.env.example
+backend/.env
+frontend/.env
+*.env

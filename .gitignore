@@ -1,22 +1,47 @@
 # Python
 __pycache__/
+**/__pycache__/
 *.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
 
 # Virtual environments
 venv/
 .venv/
+.env/
 env/
+**/venv/
+**/.venv/
+**/venv_broken_backup/
 backend/venv/
+backend/venv_broken_backup/
 
 # Environment secrets
 .env
-*.env
+.env.*
 !.env.example
+backend/.env
+frontend/.env
+frontend/.env.local
+frontend/.env.*
+*.env
+**/.env
+**/.env.*
 
 # Node
 node_modules/
+frontend/node_modules/
 frontend/dist/
 dist/
+
+# Build / generated artifacts
+backend/__pycache__/
+backend/debug_utf8.txt
+backend/.pytest_cache/
+backend/.mypy_cache/
+.pytest_cache/
+.mypy_cache/
 
 # Logs
 *.log

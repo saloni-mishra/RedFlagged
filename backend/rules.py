@@ -1,4 +1,3 @@
-
 import math
 import re
 from urllib.parse import urlparse
@@ -18,6 +17,14 @@ OFFICIAL_DOMAINS = {
     "paypal": "paypal.com",
 }
 
+KNOWN_GOOD_DOMAINS = {
+    "google.com", "gmail.com", "github.com", "microsoft.com",
+    "amazon.com", "amazon.in", "apple.com", "facebook.com",
+    "instagram.com", "linkedin.com", "netflix.com", "dropbox.com",
+    "whatsapp.com", "meta.com", "paypal.com", "x.com",
+    "outlook.com", "office.com", "icloud.com",
+}
+
 ABUSE_TLDS = {
     ".top", ".buzz", ".xyz", ".icu", ".rest", ".tk",
     ".ml", ".ga", ".cf", ".cc", ".site", ".work",
@@ -28,16 +35,139 @@ SHORTENERS = {
     "cutt.ly", "rb.gy", "shorturl.at",
 }
 
+# ---------------------------------------------------------------------------
+# Language detection
+# ---------------------------------------------------------------------------
+
+
+def detect_language(text: str) -> str:
+    """Return "hi" when more than ~20% of the letters are Devanagari, else "en"."""
+    if not text:
+        return "en"
+    letters = [ch for ch in text if ch.isalpha()]
+    if not letters:
+        return "en"
+    devanagari = sum(0x0900 <= ord(ch) <= 0x097F for ch in letters)
+    return "hi" if devanagari / len(letters) > 0.20 else "en"
+
+
+# ---------------------------------------------------------------------------
+# Word-boundary helpers.
+# Python's \b treats Devanagari vowel signs (ी ा े ें ं ्) as NON-word
+# characters, so \b(...)\b silently fails on many Hindi words. These
+# lookarounds treat Devanagari letters AND signs as word characters.
+# The danda (।, U+0964) and double danda (U+0965) are deliberately excluded
+# so they still act as sentence boundaries.
+# ---------------------------------------------------------------------------
+DEV = r"ऀ-ॣ०-ॿ"
+WB_START = r"(?<![\w" + DEV + r"])"
+WB_END = r"(?![\w" + DEV + r"])"
+
+# One negation pattern. Every alternative is boundary-safe, so "know",
+# "casino", "मतलब", "भुगतान करें" etc. do not count as negation.
 NEGATION_PATTERN = re.compile(
-    r"\b(?:no|not|none|without|isn't|doesn't|never|cannot)\b",
-    re.I,
+    r"(?:"
+    r"\b(?:no|not|none|without|never|cannot|isn['’]t|doesn['’]t|don['’]t|"
+    r"nahi|nahin|nhi|mat|bina|kabhi)\b"
+    r"|"
+    r"(?<![" + DEV + r"])(?:नहीं|कभी|बिना|मत)(?![" + DEV + r"])"
+    r"|"
+    r"(?<![" + DEV + r"])न\s+"
+    r"(?:करें|करे|दे|दें|जमा|मांगें|मांगे|मांगते|साझा|भेजें|भेजे|रखें|रखे)"
+    r"(?![" + DEV + r"])"
+    r")",
+    re.I | re.UNICODE,
 )
 
-AMOUNT_PATTERN = re.compile(
-    r"(?:₹\s*|rs\.?\s*|inr\s*)\d[\d,]*(?:\.\d+)?"
-    r"|\b\d[\d,]*(?:\.\d+)?\s*(?:rupees|rs\.?)\b",
-    re.I,
+# Amount: "₹500", "Rs. 500", "INR 500", "500 rupees", "500 रुपये"
+# "rs" / "inr" must not be the tail of another word (e.g. "hours 2").
+_AMT = (
+    r"(?:"
+    r"(?:₹|(?<![A-Za-z])rs\.?|(?<![A-Za-z])inr|रुपये|रु)\s*\d[\d,]*(?:\.\d+)?"
+    r"|"
+    r"\d[\d,]*(?:\.\d+)?\s*(?:rupees|rupaye|rs\.?|रुपये|रु)(?![A-Za-z])"
+    r")"
 )
+
+AMOUNT_PATTERN = re.compile(_AMT, re.I | re.UNICODE)
+
+# UPI-style handle such as name@okaxis (but not an email like a@gmail.com)
+HANDLE_PATTERN = re.compile(
+    r"(?<![\w.\-@])[\w.\-]{2,}@[A-Za-z]{2,}\b(?!\.[A-Za-z])"
+)
+
+# ---------------------------------------------------------------------------
+# Display text (English / Hindi). Keys of the returned dict never change;
+# only the human-readable strings switch language.
+# ---------------------------------------------------------------------------
+RULE_NAMES = {
+    "urgency": ("Urgent deadline or coercion", "तुरंत कार्रवाई का दबाव या धमकी"),
+    "payment": ("Financial demand or digital payment", "पैसे की मांग या डिजिटल भुगतान"),
+    "link": ("Suspicious external link", "संदिग्ध बाहरी लिंक"),
+    "credential": ("OTP, Aadhaar, or credential request", "OTP, आधार या पासवर्ड की मांग"),
+    "courier": ("Courier or customs hold scam", "कूरियर या कस्टम होल्ड स्कैम"),
+    "job": ("Job or recruitment scam lure", "नौकरी या भर्ती स्कैम का लालच"),
+}
+
+FLAG_TEXT = {
+    "urgency": (
+        "High-pressure urgency or legal intimidation detected.",
+        "तुरंत कार्रवाई का दबाव या कानूनी धमकी के संकेत मिले।",
+    ),
+    "payment": (
+        "Financial demand or digital payment indicator detected.",
+        "पैसे की मांग या डिजिटल भुगतान का संकेत मिला।",
+    ),
+    "credential": (
+        "Request involving OTP, Aadhaar, or sensitive credentials detected.",
+        "OTP, आधार या संवेदनशील जानकारी मांगने का संकेत मिला।",
+    ),
+    "courier": (
+        "Courier or customs clearance-fee pattern detected.",
+        "कूरियर या कस्टम क्लीयरेंस शुल्क जैसा पैटर्न मिला।",
+    ),
+    "job": (
+        "Job, recruitment, or prize-lure language detected.",
+        "नौकरी, भर्ती या इनाम के लालच जैसी भाषा मिली।",
+    ),
+}
+
+EXPLAIN_TEXT = {
+    "urgency": (
+        ("Coercive urgency or deadline indicators detected.",
+         "No coercive deadline or threat keywords found."),
+        ("तुरंत कार्रवाई या धमकी के संकेत मिले।",
+         "कोई धमकी या जल्दबाजी वाले शब्द नहीं मिले।"),
+    ),
+    "payment": (
+        ("Financial demand or payment indicator found.",
+         "No matching financial demand or payment indicator found."),
+        ("पैसे की मांग या भुगतान का संकेत मिला।",
+         "पैसे की मांग या भुगतान का कोई संकेत नहीं मिला।"),
+    ),
+    "credential": (
+        ("Sensitive credential-related language detected.",
+         "No matching credential-harvesting language found."),
+        ("OTP, आधार या पासवर्ड जैसी संवेदनशील जानकारी मांगने की भाषा मिली।",
+         "संवेदनशील जानकारी मांगने वाली भाषा नहीं मिली।"),
+    ),
+    "courier": (
+        ("Courier or customs clearance-fee indicators detected.",
+         "No courier or customs clearance patterns found."),
+        ("कूरियर या कस्टम क्लीयरेंस शुल्क के संकेत मिले।",
+         "कूरियर या कस्टम से जुड़ा कोई पैटर्न नहीं मिला।"),
+    ),
+    "job": (
+        ("Job, recruitment, or prize-lure indicators detected.",
+         "No matching job recruitment or prize-lure patterns found."),
+        ("नौकरी, भर्ती या इनाम के लालच के संकेत मिले।",
+         "नौकरी या इनाम के लालच का कोई पैटर्न नहीं मिला।"),
+    ),
+}
+
+
+def _pick(pair: tuple, lang: str) -> str:
+    return pair[1] if lang == "hi" else pair[0]
 
 
 def _levenshtein_distance(s1: str, s2: str) -> int:
@@ -67,8 +197,53 @@ def _levenshtein_distance(s1: str, s2: str) -> int:
     return previous_row[-1]
 
 
+def _get_reputable_core(host: str) -> str:
+    """Return the registrable core for a hostname, ignoring common public suffixes."""
+    normalized = host.lower().rstrip(".")
+    if normalized.startswith("www."):
+        normalized = normalized[4:]
+
+    suffixes = (
+        "co.in", "gov.in", "nic.in", "ac.in", "edu.in",
+        "co.uk", "com.au", "co.jp",
+        "com", "org", "net", "gov", "edu", "info", "io",
+    )
+
+    for suffix in sorted(suffixes, key=len, reverse=True):
+        if normalized == suffix:
+            return ""
+        if normalized.endswith("." + suffix):
+            return normalized[: -(len(suffix) + 1)].split(".")[-1]
+
+    return normalized.split(".")[-1] if normalized else ""
+
+
+def _is_known_good_domain(host: str) -> bool:
+    """Return True for official or reputable domains that should not be flagged by default."""
+    if not host:
+        return False
+
+    normalized = host.lower().rstrip(".")
+    if normalized.startswith("www."):
+        normalized = normalized[4:]
+
+    if normalized in KNOWN_GOOD_DOMAINS:
+        return True
+
+    if any(
+        normalized == domain or normalized.endswith("." + domain)
+        for domain in OFFICIAL_DOMAINS.values()
+    ):
+        return True
+
+    return False
+
+
 def _deconstruct_url(raw_url: str) -> list[dict]:
-    """Detect suspicious URL structure and possible institutional impersonation."""
+    """Detect suspicious URL structure and possible institutional impersonation.
+
+    Each finding keeps the original "detail" (English) and adds "detail_hi".
+    """
     flags = []
 
     clean_url = (
@@ -86,16 +261,20 @@ def _deconstruct_url(raw_url: str) -> list[dict]:
     if not host:
         return flags
 
+    if _is_known_good_domain(host):
+        return flags
+
     # 1. Direct IP address instead of a domain
-    if re.fullmatch(
-        r"(?:\d{1,3}\.){3}\d{1,3}", host
-    ):
+    if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", host):
         flags.append({
             "type": "RAW_IP",
             "evidence": raw_url,
             "detail": (
                 f"Directs to a numerical IP address ({host}) "
                 "rather than an institutional domain."
+            ),
+            "detail_hi": (
+                f"लिंक किसी संस्था के डोमेन की जगह सीधे IP पता ({host}) पर ले जाता है।"
             ),
             "weight": 35,
         })
@@ -109,13 +288,15 @@ def _deconstruct_url(raw_url: str) -> list[dict]:
                 f"Uses link shortener '{host}', which conceals "
                 "the destination until the link is opened."
             ),
+            "detail_hi": (
+                f"'{host}' जैसा छोटा लिंक इस्तेमाल हुआ है, जो खोलने से पहले असली "
+                "वेबसाइट छिपा देता है।"
+            ),
             "weight": 25,
         })
 
     # 3. High-abuse top-level domains
-    matched_tlds = [
-        tld for tld in ABUSE_TLDS if host.endswith(tld)
-    ]
+    matched_tlds = [tld for tld in ABUSE_TLDS if host.endswith(tld)]
 
     if matched_tlds:
         tld_matched = max(matched_tlds, key=len)
@@ -127,14 +308,16 @@ def _deconstruct_url(raw_url: str) -> list[dict]:
                 f"Uses a domain ending in '{tld_matched}', "
                 "which warrants additional scrutiny."
             ),
+            "detail_hi": (
+                f"डोमेन '{tld_matched}' पर खत्म होता है, जो अक्सर धोखाधड़ी में "
+                "इस्तेमाल होता है, इसलिए सावधानी रखें।"
+            ),
             "weight": 25,
         })
 
     # 4. Brand impersonation and typosquatting
-    host_parts = host.split(".")
-    core_host = (
-        host_parts[-2] if len(host_parts) >= 2 else host_parts[0]
-    )
+    core_host = _get_reputable_core(host)
+    host_tokens = [t for t in re.split(r"[.\-_]", host) if t]
 
     for brand, legit_domain in OFFICIAL_DOMAINS.items():
         legit_core = legit_domain.split(".")[0]
@@ -144,8 +327,15 @@ def _deconstruct_url(raw_url: str) -> list[dict]:
             or host.endswith("." + legit_domain)
         )
 
-        # A brand name embedded in an unrelated hostname
-        if brand in host and not is_official_domain:
+        # Brand used as a whole label, or at the start of a label
+        # (sbi-kyc.top, sbikyc.top, hdfcbank-login.xyz). A plain substring
+        # test would wrongly flag words like "purchase" for "chase".
+        brand_in_host = any(
+            token == brand or token.startswith(brand)
+            for token in host_tokens
+        )
+
+        if brand_in_host and not is_official_domain:
             flags.append({
                 "type": "SUBDOMAIN_TRAP",
                 "evidence": raw_url,
@@ -153,17 +343,27 @@ def _deconstruct_url(raw_url: str) -> list[dict]:
                     f"Brand name '{brand}' appears in unrelated "
                     f"hostname '{host}'."
                 ),
+                "detail_hi": (
+                    f"'{brand}' नाम एक असंबंधित वेबसाइट '{host}' में इस्तेमाल हुआ है।"
+                ),
                 "weight": 40,
             })
 
-        distance = _levenshtein_distance(
-            core_host, legit_core
+        distance = _levenshtein_distance(core_host, legit_core)
+
+        # Short brands only tolerate 1 edit, and a shorter look-alike
+        # (case.com vs chase.com) is ignored to avoid ordinary words.
+        max_distance = 1 if len(legit_core) <= 6 else 2
+        short_brand_too_short = (
+            len(legit_core) <= 5 and len(core_host) < len(legit_core)
         )
 
         if (
-            1 <= distance <= 2
-            and core_host != legit_core
+            1 <= distance <= max_distance
+            and core_host and core_host != legit_core
             and len(core_host) >= 4
+            and not short_brand_too_short
+            and not is_official_domain
             and host not in SHORTENERS
         ):
             flags.append({
@@ -173,6 +373,10 @@ def _deconstruct_url(raw_url: str) -> list[dict]:
                     f"Hostname '{host}' resembles legitimate "
                     f"domain '{legit_domain}' "
                     f"(edit distance: {distance})."
+                ),
+                "detail_hi": (
+                    f"वेबसाइट '{host}' असली डोमेन '{legit_domain}' से मिलती-जुलती "
+                    f"नकली लगती है (अंतर: {distance} अक्षर)।"
                 ),
                 "weight": 35,
             })
@@ -200,30 +404,47 @@ def calculate_calibrated_score(raw_points: int) -> tuple[int, str]:
     return score, level
 
 
+def _clause_around(text: str, start: int, end: int, pad: int = 50) -> str:
+    """Return the text near a match, limited to the same sentence/clause.
+
+    A negation in a different sentence ("Do not worry. Pay Rs 500 now.")
+    must not cancel a detection in this one.
+    """
+    seps = ".!?।;\n"
+    left = max(text.rfind(c, 0, start) for c in seps) + 1
+    rights = [i for i in (text.find(c, end) for c in seps) if i != -1]
+    right = min(rights) if rights else len(text)
+    return text[max(left, start - pad):min(right, end + pad)]
+
+
 def _keyword_matches(
     text: str,
     pattern: re.Pattern,
     negation_pattern: re.Pattern,
 ) -> list[str]:
-    """Return matches unless nearby preceding words indicate negation."""
+    """Return matches unless the same clause clearly negates them."""
     matches = []
 
     for match in pattern.finditer(text):
-        preceding_words = re.findall(
-            r"\b[\w']+\b", text[:match.start()]
-        )[-3:]
+        local_context = _clause_around(text, match.start(), match.end())
 
-        if not negation_pattern.search(
-            " ".join(preceding_words)
-        ):
-            matches.append(match.group(0))
+        if negation_pattern.search(local_context):
+            continue
+
+        matches.append(match.group(0))
 
     return list(dict.fromkeys(matches))
 
 
-def analyze_rules(text: str) -> dict:
-    """Run deterministic checks and return the existing API-compatible result."""
+def analyze_rules(text: str, lang: str | None = None) -> dict:
+    """Run deterministic checks and return the existing API-compatible result.
+
+    `lang` ("en" / "hi") controls only the display strings. When omitted it is
+    detected from the text. All existing keys are unchanged; new keys are
+    "language" and, per breakdown row, "rule_hi".
+    """
     text = text or ""
+    lang = lang if lang in ("en", "hi") else detect_language(text)
 
     raw_points = 0
     active_flags = []
@@ -236,16 +457,26 @@ def analyze_rules(text: str) -> dict:
 
     # 1. Urgency, coercion and threats
     urgency_pattern = re.compile(
-        r"\b("
+        WB_START + r"("
         r"immediate(?:ly)?|within\s+\d+\s*hours?|"
-        r"today|urgent(?:ly)?|"
+        r"urgent(?:ly)?|"
         r"only\s+\d+\s+(?:slots?|seats?|positions?)\s+left|"
         r"limited\s+(?:slots?|seats?|time)|"
         r"deadline|expires?\s+(?:today|soon|in)|"
-        r"warrant|arrest|custody|seized|freeze|blocked|"
-        r"disconnection|penalty|non-bailable|fir registered"
-        r")\b",
-        re.I,
+        r"warrant|arrest|custody|seized|freeze|blocked|block\s+ho\w*|"
+        r"suspend(?:ed)?|"
+        r"disconnection|penalty|non-bailable|fir registered|"
+        r"(?:2\s*hours?|\d+\s*hours?|2\s*घंटे|\d+\s*घंटे|दो\s*घंटे|एक\s*घंटे)|"
+        # Hinglish (Roman-script Hindi)
+        r"turant|foran|"
+        r"(?:abhi|jaldi)\s+(?:pay|bhej\w*|share|verify|karein|kare|karo|click|jama)|"
+        # Hindi
+        r"(?:तुरंत|फौरन|जरूरी|कानूनी|गिरफ्तारी|अरेस्ट|कैद|फ्रीज|ब्लॉक|पेनल्टी|"
+        r"निलंबित|निलंबन|सस्पेंड|सस्पेंडेड|अवरोधित|खाता\s*(?:निलंबित|बंद|ब्लॉक)|"
+        r"तुरंत\s*ही|"
+        r"(?:आज|अभी|जल्दी)\s*(?:ही\s*)?(?:भुगतान|जमा|भेजें|भेजो|साझा|क्लिक|वेरीफाई|अपडेट))"
+        r")" + WB_END,
+        re.I | re.UNICODE,
     )
 
     urgency_matches = _keyword_matches(
@@ -257,35 +488,46 @@ def analyze_rules(text: str) -> dict:
     raw_points += urgency_weight
 
     if urgency_triggered:
-        active_flags.append(
-            "High-pressure urgency or legal intimidation detected."
-        )
+        active_flags.append(_pick(FLAG_TEXT["urgency"], lang))
 
-    # 2. Financial demands and payment methods
+    # 2. Financial demand / digital payment
+    payment_keyword = (
+        r"(?:@[a-zA-Z0-9._-]{3,}|"
+        + WB_START
+        + r"(?:upi|paytm|gpay|phonepe|pay\w*|deposit\w*|transfer\w*|send|"
+        r"remit\w*|submit|charge\w*|fees?|wallet|bhugtan|"
+        r"जमा|भुगतान|पेमेंट|फीस|शुल्क|ट्रांसफर|भेजें|भेजो|राशि|अमाउंट|कस्टम|क्लीयरेंस))"
+    )
+    payment_verb = (
+        WB_START
+        + r"(?:जमा|भुगतान|पेमेंट|फीस|शुल्क|ट्रांसफर|भेजें|भेजो|भेजिए|चुकाएं|चुकाओ|सेंड|"
+        r"pay\w*|deposit\w*|transfer\w*|send|submit|charge\w*|remit\w*|refund|"
+        r"bhugtan|bhej\w*|jama|chukao)"
+        + WB_END
+    )
+
     payment_pattern = re.compile(
-        r"@[a-zA-Z0-9._-]{3,}"
-        r"|upi|paytm|gpay|phonepe"
-        r"|(?:pay|deposit|transfer|send|remit|submit|"
-        r"charge|fee|payment)\b"
-        r".{0,60}?"
-        r"(?:₹\s*\d[\d,]*(?:\.\d+)?"
-        r"|rs\.?\s*\d[\d,]*(?:\.\d+)?"
-        r"|inr\s*\d[\d,]*(?:\.\d+)?"
-        r"|\b\d[\d,]*(?:\.\d+)?\s*(?:rupees|rs\.?)\b)",
-        re.I,
+        r"(?:"
+        + payment_keyword + r".{0,80}?" + _AMT
+        + r"|"
+        + _AMT + r".{0,60}?" + payment_verb
+        + r"|"
+        + payment_verb + r".{0,80}?" + _AMT
+        + r")",
+        re.I | re.UNICODE,
     )
 
     payment_matches = _keyword_matches(
         text, payment_pattern, NEGATION_PATTERN
     )
 
-    payment_handles = [
-        match for match in payment_matches
-        if match.startswith("@")
-        or match.lower() in {
-            "upi", "paytm", "gpay", "phonepe"
-        }
-    ]
+    payment_handles = list(dict.fromkeys(
+        [h for h in HANDLE_PATTERN.findall(text)]
+        + [
+            match for match in payment_matches
+            if match.lower() in {"upi", "paytm", "gpay", "phonepe"}
+        ]
+    ))
 
     amounts = list(dict.fromkeys(
         match.group(0).strip()
@@ -297,9 +539,7 @@ def analyze_rules(text: str) -> dict:
     raw_points += payment_weight
 
     if payment_triggered:
-        active_flags.append(
-            "Financial demand or digital payment indicator detected."
-        )
+        active_flags.append(_pick(FLAG_TEXT["payment"], lang))
 
     # 3. URL analysis
     link_candidates = re.findall(
@@ -320,31 +560,6 @@ def analyze_rules(text: str) -> dict:
         if findings:
             url_findings.extend(findings)
             suspicious_urls.append(candidate)
-            continue
-
-        clean_candidate = (
-            candidate
-            if candidate.startswith(("http://", "https://"))
-            else "http://" + candidate
-        )
-
-        try:
-            parsed_host = (
-                urlparse(clean_candidate).hostname or ""
-            ).lower().rstrip(".")
-        except Exception:
-            parsed_host = ""
-
-        is_institutional = any(
-            parsed_host == suffix.lstrip(".")
-            or parsed_host.endswith(suffix)
-            for suffix in (
-                ".gov.in", ".nic.in", ".ac.in", ".edu"
-            )
-        )
-
-        if not is_institutional:
-            suspicious_urls.append(candidate)
 
     suspicious_urls = list(dict.fromkeys(suspicious_urls))
 
@@ -360,18 +575,18 @@ def analyze_rules(text: str) -> dict:
 
     raw_points += link_weight
 
+    detail_key = "detail_hi" if lang == "hi" else "detail"
+
     if url_findings:
-        active_flags.append(
-            f"Deceptive URL indicator: {url_findings[0]['detail']}"
-        )
+        prefix = "भ्रामक URL का संकेत: " if lang == "hi" else "Deceptive URL indicator: "
+        active_flags.append(prefix + url_findings[0][detail_key])
     elif suspicious_urls:
-        active_flags.append(
-            f"Unverified external link found: {suspicious_urls[0]}"
-        )
+        prefix = "अनजान बाहरी लिंक मिला: " if lang == "hi" else "Unverified external link found: "
+        active_flags.append(prefix + suspicious_urls[0])
 
     # 4. OTP, Aadhaar and credential harvesting
     credential_pattern = re.compile(
-        r"\b("
+        WB_START + r"("
         r"otp|one[- ]time password|verification code|mpin|"
         r"m[- ]?pin|aadhaar|aadhar|uidai|"
         r"share (?:your )?(?:otp|pin|password|mpin)|"
@@ -379,9 +594,12 @@ def analyze_rules(text: str) -> dict:
         r"confirm (?:your )?otp|"
         r"verify (?:your )?(?:aadhaar|aadhar|kyc)|"
         r"e[- ]?kyc|complete (?:your )?kyc|"
-        r"(?:photo|copy|scan) of (?:your )?(?:aadhaar|aadhar|pan)"
-        r")\b",
-        re.I,
+        r"(?:photo|copy|scan) of (?:your )?(?:aadhaar|aadhar|pan)|"
+        r"(?:password|passcode|pin|kyc|"
+        r"पासवर्ड|ओटीपी|पिन|एमपिन|आधार|यूआईडीएआई|केवाईसी)"
+        r"(?:\s+(?:कृपया|कृप्या|दें|मांगें|दे|जमा|भेजें|लिखें|चेक|बनाएं|बनाओ|करें|साझा\s*करें))?"
+        r")" + WB_END,
+        re.I | re.UNICODE,
     )
 
     credential_matches = _keyword_matches(
@@ -393,13 +611,11 @@ def analyze_rules(text: str) -> dict:
     raw_points += credential_weight
 
     if credential_triggered:
-        active_flags.append(
-            "Request involving OTP, Aadhaar, or sensitive credentials detected."
-        )
+        active_flags.append(_pick(FLAG_TEXT["credential"], lang))
 
     # 5. Courier and customs impersonation
     courier_pattern = re.compile(
-        r"\b("
+        WB_START + r"("
         r"customs (?:fee|duty|clearance|charge)|"
         r"clearance (?:fee|charge|payment)|"
         r"consignment (?:held|blocked|detained|seized)|"
@@ -408,9 +624,13 @@ def analyze_rules(text: str) -> dict:
         r"(?:fee|customs|clearance|pay)|"
         r"(?:pay|deposit).{0,30}"
         r"(?:customs|clearance) (?:fee|charge)|"
-        r"courier (?:clearance|customs) (?:fee|charge)"
-        r")\b",
-        re.I,
+        r"courier (?:clearance|customs) (?:fee|charge)|"
+        r"(?:कस्टम|कस्टम्स|कूरियर|पार्सल|शिपमेंट|कैरियर|डिलीवरी).{0,45}"
+        r"(?:फीस|शुल्क|चार्ज|पेमेंट|भुगतान|जमा|क्लीयरेंस)|"
+        r"(?:फीस|शुल्क|चार्ज|पेमेंट|भुगतान|जमा).{0,35}"
+        r"(?:कस्टम|क्लीयरेंस|पार्सल|कूरियर|शिपमेंट)"
+        r")" + WB_END,
+        re.I | re.UNICODE,
     )
 
     courier_matches = courier_pattern.findall(text)
@@ -419,13 +639,11 @@ def analyze_rules(text: str) -> dict:
     raw_points += courier_weight
 
     if courier_triggered:
-        active_flags.append(
-            "Courier or customs clearance-fee pattern detected."
-        )
+        active_flags.append(_pick(FLAG_TEXT["courier"], lang))
 
     # 6. Job, recruitment and prize lures
     job_pattern = re.compile(
-        r"\b("
+        WB_START + r"("
         r"work from home|wfh|"
         r"remote.{0,40}(?:internship|job|work|position|role)|"
         r"(?:software developer|data analyst|developer|"
@@ -445,96 +663,111 @@ def analyze_rules(text: str) -> dict:
         r"whatsapp (?:job|interview|task|recruitment)|"
         r"task[- ]based (?:job|earning|work)|"
         r"earn ₹?\s*[\d,]+.{0,15}(?:daily|per day|per week|monthly)|"
-        r"(?:won|winner).{0,25}(?:prize|lottery|reward)"
-        r")\b",
-        re.I,
+        r"(?:won|winner).{0,25}(?:prize|lottery|reward)|"
+        r"(?:internship|job|recruitment|employment|vacancy|role|position|work from home|home based).{0,60}"
+        r"(?:फीस|शुल्क|जमा|भुगतान|पेमेंट|रजिस्ट्रेशन|प्रक्रिया|ट्रेनिंग)|"
+        r"(?:रजिस्ट्रेशन|जॉब|इंटर्नशिप|कोर्स|पोज़ीशन).{0,35}"
+        r"(?:फीस|शुल्क|जमा|भुगतान|पेमेंट|रजिस्ट्रेशन)|"
+        r"(?:₹\s*\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s*(?:रुपये|rs))"
+        r".{0,25}(?:दो\s*घंटे|2\s*घंटे|2\s*hours?|घंटे|दिन|daily)|"
+        r"(?:इंटर्नशिप|जॉब|रोज़गार|नौकरी|कार्य|कार्यशाला|प्रोजेक्ट|काम).{0,40}"
+        r"(?:₹\s*\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s*(?:रुपये|rs)|जमा|भुगतान|पेमेंट|शुल्क|फीस)"
+        r".{0,40}(?:दो\s*घंटे|2\s*घंटे|अभी|तुरंत|आज|आज ही)|"
+        r"(?:इंटर्नशिप|रजिस्ट्रेशन|जॉब|काम|कार्य).{0,60}"
+        r"(?:₹\s*\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s*(?:रुपये|rs)|जमा|भुगतान|पेमेंट|शुल्क|फीस)"
+        r".{0,60}(?:अभी|तुरंत|आज|आज ही|दो\s*घंटे|2\s*घंटे)|"
+        # Upfront-fee job offers in Hindi ("सिक्योरिटी फीस", "यूनिफॉर्म/आईडी कार्ड" ...)
+        r"(?:सिक्योरिटी|सिक्यूरिटी|रजिस्ट्रेशन|प्रोसेसिंग|ज्वाइनिंग|जॉइनिंग|ट्रेनिंग|"
+        r"यूनिफॉर्म|आईडी\s*कार्ड|किट)\s*(?:फीस|शुल्क|चार्ज|डिपॉजिट|राशि)|"
+        r"(?:चुन\s*ली\s*गई|चुना\s*गया|चयनित|सिलेक्ट|शॉर्टलिस्ट).{0,100}"
+        r"(?:फीस|शुल्क|जमा|डिपॉजिट)|"
+        r"(?:पद|नौकरी|जॉब|वैकेंसी|ज्वाइनिंग|जॉइनिंग).{0,150}"
+        r"(?:फीस|शुल्क|डिपॉजिट).{0,60}(?:जमा|भुगतान|भेज)|"
+        r"(?:फीस|शुल्क|डिपॉजिट).{0,80}(?:वापस|रिफंड)"
+        r")" + WB_END,
+        re.I | re.UNICODE,
     )
 
-    job_matches = job_pattern.findall(text)
+    job_matches = _keyword_matches(text, job_pattern, NEGATION_PATTERN)
     job_triggered = bool(job_matches)
     job_weight = 30 if job_triggered else 0
     raw_points += job_weight
 
     if job_triggered:
-        active_flags.append(
-            "Job, recruitment, or prize-lure language detected."
-        )
+        active_flags.append(_pick(FLAG_TEXT["job"], lang))
 
     # 7. Calibrated score and API-compatible rule breakdown
     calibrated_score, risk_level = calculate_calibrated_score(
         raw_points
     )
 
+    if url_findings:
+        link_explanation = url_findings[0][detail_key]
+    elif suspicious_urls:
+        link_explanation = (
+            f"अनजान बाहरी URL मिला: {suspicious_urls[0]}"
+            if lang == "hi"
+            else f"Unverified external URL detected: {suspicious_urls[0]}"
+        )
+    else:
+        link_explanation = (
+            "कोई भ्रामक या अनजान लिंक नहीं मिला।"
+            if lang == "hi"
+            else "No deceptive or unverified links found."
+        )
+
+    def _explain(key: str, triggered: bool) -> str:
+        yes_no = EXPLAIN_TEXT[key][1 if lang == "hi" else 0]
+        return yes_no[0] if triggered else yes_no[1]
+
     rule_breakdown = [
         {
-            "rule": "Urgent deadline or coercion",
+            "rule": RULE_NAMES["urgency"][0],
+            "rule_hi": RULE_NAMES["urgency"][1],
             "points": urgency_weight,
             "triggered": urgency_triggered,
             "evidence": ", ".join(urgency_matches),
-            "explanation": (
-                "Coercive urgency or deadline indicators detected."
-                if urgency_triggered
-                else "No coercive deadline or threat keywords found."
-            ),
+            "explanation": _explain("urgency", urgency_triggered),
         },
         {
-            "rule": "Financial demand or digital payment",
+            "rule": RULE_NAMES["payment"][0],
+            "rule_hi": RULE_NAMES["payment"][1],
             "points": payment_weight,
             "triggered": payment_triggered,
             "evidence": ", ".join(payment_matches),
-            "explanation": (
-                "Financial demand or payment indicator found."
-                if payment_triggered
-                else "No matching financial demand or payment indicator found."
-            ),
+            "explanation": _explain("payment", payment_triggered),
         },
         {
-            "rule": "Suspicious external link",
+            "rule": RULE_NAMES["link"][0],
+            "rule_hi": RULE_NAMES["link"][1],
             "points": link_weight,
             "triggered": link_triggered,
             "evidence": suspicious_urls[0] if suspicious_urls else "",
-            "explanation": (
-                url_findings[0]["detail"]
-                if url_findings
-                else (
-                    f"Unverified external URL detected: {suspicious_urls[0]}"
-                    if suspicious_urls
-                    else "No deceptive or unverified links found."
-                )
-            ),
+            "explanation": link_explanation,
         },
         {
-            "rule": "OTP, Aadhaar, or credential request",
+            "rule": RULE_NAMES["credential"][0],
+            "rule_hi": RULE_NAMES["credential"][1],
             "points": credential_weight,
             "triggered": credential_triggered,
             "evidence": ", ".join(credential_matches),
-            "explanation": (
-                "Sensitive credential-related language detected."
-                if credential_triggered
-                else "No matching credential-harvesting language found."
-            ),
+            "explanation": _explain("credential", credential_triggered),
         },
         {
-            "rule": "Courier or customs hold scam",
+            "rule": RULE_NAMES["courier"][0],
+            "rule_hi": RULE_NAMES["courier"][1],
             "points": courier_weight,
             "triggered": courier_triggered,
             "evidence": ", ".join(dict.fromkeys(courier_matches)),
-            "explanation": (
-                "Courier or customs clearance-fee indicators detected."
-                if courier_triggered
-                else "No courier or customs clearance patterns found."
-            ),
+            "explanation": _explain("courier", courier_triggered),
         },
         {
-            "rule": "Job or recruitment scam lure",
+            "rule": RULE_NAMES["job"][0],
+            "rule_hi": RULE_NAMES["job"][1],
             "points": job_weight,
             "triggered": job_triggered,
             "evidence": ", ".join(job_matches),
-            "explanation": (
-                "Job, recruitment, or prize-lure indicators detected."
-                if job_triggered
-                else "No matching job recruitment or prize-lure patterns found."
-            ),
+            "explanation": _explain("job", job_triggered),
         },
     ]
 
@@ -548,4 +781,5 @@ def analyze_rules(text: str) -> dict:
         "payment_handles": payment_handles,
         "urgency_phrases": urgency_matches,
         "rule_breakdown": rule_breakdown,
+        "language": lang,
     }
