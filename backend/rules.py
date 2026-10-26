@@ -236,6 +236,16 @@ def _is_known_good_domain(host: str) -> bool:
     ):
         return True
 
+    # Subdomains of reputable domains (accounts.google.com) are controlled
+    # by the same operator, so they are known-good too. Deceptive hosts
+    # such as google.com.fake-site.example do not end with the reputable
+    # domain and are therefore not affected by this.
+    if any(
+        normalized.endswith("." + domain)
+        for domain in KNOWN_GOOD_DOMAINS
+    ):
+        return True
+
     return False
 
 
@@ -380,6 +390,32 @@ def _deconstruct_url(raw_url: str) -> list[dict]:
                 ),
                 "weight": 35,
             })
+
+    # 5. Reputable-service prefix trap: a widely-known domain used as a
+    # leading subdomain label of an unrelated host
+    # (google.com.fake-site.example). Official brands are already covered
+    # by the token check above, so only reputable domains that are not
+    # official-brand domains are checked here. The dotted-prefix test
+    # cannot misfire on ordinary words, so no length guard is needed.
+    host_no_www = host[4:] if host.startswith("www.") else host
+    for protected in sorted(KNOWN_GOOD_DOMAINS):
+        if protected in OFFICIAL_DOMAINS.values():
+            continue
+        if host_no_www.startswith(protected + "."):
+            flags.append({
+                "type": "SUBDOMAIN_TRAP",
+                "evidence": raw_url,
+                "detail": (
+                    f"Reputable domain '{protected}' appears as a "
+                    f"subdomain prefix of unrelated hostname '{host}'."
+                ),
+                "detail_hi": (
+                    f"'{protected}' जैसा प्रतिष्ठित डोमेन असंबंधित वेबसाइट "
+                    f"'{host}' में उप-डोमेन की तरह इस्तेमाल हुआ है।"
+                ),
+                "weight": 40,
+            })
+            break
 
     return flags
 
@@ -571,6 +607,11 @@ def analyze_rules(text: str, lang: str | None = None) -> dict:
 
     url_findings = []
     suspicious_urls = []
+    # http(s) URLs with no deceptive indicators. These are merely
+    # unverified, not malicious: the link rule stays untriggered and they
+    # contribute no points. Previously suspicious_urls was only populated
+    # alongside findings, which left the "unverified" branch unreachable.
+    unverified_urls = []
 
     for candidate in link_candidates:
         candidate = candidate.rstrip(".,;:!?)\"]}")
@@ -579,8 +620,21 @@ def analyze_rules(text: str, lang: str | None = None) -> dict:
         if findings:
             url_findings.extend(findings)
             suspicious_urls.append(candidate)
+        else:
+            try:
+                cand_parsed = urlparse(
+                    candidate
+                    if candidate.startswith(("http://", "https://"))
+                    else "http://" + candidate
+                )
+                cand_host = (cand_parsed.hostname or "").lower().rstrip(".")
+            except Exception:
+                cand_host = ""
+            if cand_host and not _is_known_good_domain(cand_host):
+                unverified_urls.append(candidate)
 
     suspicious_urls = list(dict.fromkeys(suspicious_urls))
+    unverified_urls = list(dict.fromkeys(unverified_urls))
 
     link_triggered = bool(url_findings or suspicious_urls)
 
@@ -599,9 +653,6 @@ def analyze_rules(text: str, lang: str | None = None) -> dict:
     if url_findings:
         prefix = "भ्रामक URL का संकेत: " if lang == "hi" else "Deceptive URL indicator: "
         active_flags.append(prefix + url_findings[0][detail_key])
-    elif suspicious_urls:
-        prefix = "अनजान बाहरी लिंक मिला: " if lang == "hi" else "Unverified external link found: "
-        active_flags.append(prefix + suspicious_urls[0])
 
     # 4. OTP, Aadhaar and credential harvesting
     credential_pattern = re.compile(
@@ -652,7 +703,9 @@ def analyze_rules(text: str, lang: str | None = None) -> dict:
         re.I | re.UNICODE,
     )
 
-    courier_matches = courier_pattern.findall(text)
+    courier_matches = _keyword_matches(
+        text, courier_pattern, NEGATION_PATTERN
+    )
     courier_triggered = bool(courier_matches)
     courier_weight = 30 if courier_triggered else 0
     raw_points += courier_weight
@@ -744,13 +797,21 @@ def analyze_rules(text: str, lang: str | None = None) -> dict:
 
     if url_findings:
         link_explanation = url_findings[0][detail_key]
-    elif suspicious_urls:
+        link_classification = "suspicious"
+    elif unverified_urls:
+        # No deceptive indicators: labelled unverified, not malicious.
+        # The link rule stays untriggered with 0 points.
+        link_classification = "unverified"
         link_explanation = (
-            f"अनजान बाहरी URL मिला: {suspicious_urls[0]}"
+            f"अनजान बाहरी लिंक मिला लेकिन कोई भ्रामक संकेत नहीं: "
+            f"{unverified_urls[0]}। क्लिक करने या भुगतान से पहले स्वयं पुष्टि करें।"
             if lang == "hi"
-            else f"Unverified external URL detected: {suspicious_urls[0]}"
+            else f"Unverified external link present but no deceptive "
+            f"indicators found: {unverified_urls[0]}. "
+            f"Verify independently before clicking or paying."
         )
     else:
+        link_classification = "none"
         link_explanation = (
             "कोई भ्रामक या अनजान लिंक नहीं मिला।"
             if lang == "hi"
@@ -785,6 +846,10 @@ def analyze_rules(text: str, lang: str | None = None) -> dict:
             "triggered": link_triggered,
             "evidence": suspicious_urls[0] if suspicious_urls else "",
             "explanation": link_explanation,
+            # "suspicious": deterministic deceptive indicators found;
+            # "unverified": external URL(s) present but no deceptive
+            # indicators (not malicious); "none": no external URL.
+            "classification": link_classification,
         },
         {
             "rule": RULE_NAMES["credential"][0],
@@ -818,6 +883,7 @@ def analyze_rules(text: str, lang: str | None = None) -> dict:
         "risk_level": risk_level,
         "flags": active_flags,
         "extracted_urls": extracted_urls,
+        "unverified_urls": unverified_urls,
         "amounts": amounts,
         "payment_handles": payment_handles,
         "urgency_phrases": urgency_matches,

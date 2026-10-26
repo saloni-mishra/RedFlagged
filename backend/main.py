@@ -54,6 +54,10 @@ class RuleBreakdown(BaseModel):
     points: int
     triggered: bool
     explanation: str
+    # URL classification from the rule engine ("suspicious", "unverified",
+    # "none", or "" for non-URL rules). Optional so older clients are
+    # unaffected.
+    classification: str = ""
 
 
 class GeminiAnalysisResponse(BaseModel):
@@ -176,6 +180,7 @@ def _rule_rows(rule_results: dict, language: str) -> list[RuleBreakdown]:
                 points=item["points"],
                 triggered=item["triggered"],
                 explanation=item["explanation"],
+                classification=item.get("classification", ""),
             )
         )
     return rows
