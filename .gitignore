@@ -9,10 +9,12 @@ __pycache__/
 # Virtual environments
 venv/
 .venv/
+.venv-win/
 .env/
 env/
 **/venv/
 **/.venv/
+**/.venv-win/
 **/venv_broken_backup/
 backend/venv/
 backend/venv_broken_backup/

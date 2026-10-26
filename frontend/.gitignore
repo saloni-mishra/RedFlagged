@@ -1,36 +1,21 @@
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
-
-node_modules
-dist
-dist-ssr
-*.local
-
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
 # Python
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *.pyo
+*.pyd
+*.egg-info/
 
 # Virtual environments
 venv/
 .venv/
+.venv-win/
+.env/
 env/
+**/venv/
+**/.venv/
+**/.venv-win/
+**/venv_broken_backup/
 backend/venv/
 backend/venv_broken_backup/
 
@@ -40,4 +25,30 @@ backend/venv_broken_backup/
 !.env.example
 backend/.env
 frontend/.env
+frontend/.env.local
+frontend/.env.*
 *.env
+**/.env
+**/.env.*
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+dist/
+
+# Build / generated artifacts
+backend/__pycache__/
+backend/debug_utf8.txt
+backend/.pytest_cache/
+backend/.mypy_cache/
+.pytest_cache/
+.mypy_cache/
+
+# Logs
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

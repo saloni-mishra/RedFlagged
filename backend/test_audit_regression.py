@@ -258,7 +258,6 @@ def _build_minimal_pdf(payload: bytes) -> bytes:
 
 
 def test_extract_text_endpoints_without_gemini():
-    """PDF / pasted-text / empty extraction must work without AI calls."""
     try:
         from fastapi.testclient import TestClient
         import main
@@ -284,7 +283,7 @@ def test_extract_text_endpoints_without_gemini():
 
 
 def test_analyze_rejects_missing_text_without_gemini():
-    """Missing form text fails FastAPI validation before any AI call."""
+
     try:
         from fastapi.testclient import TestClient
         import main
