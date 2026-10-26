@@ -707,7 +707,29 @@ def analyze_rules(text: str, lang: str | None = None) -> dict:
         re.I | re.UNICODE,
     )
 
-    job_matches = _keyword_matches(text, job_pattern, NEGATION_PATTERN)
+    
+    hindi_job_fee_pattern = re.compile(
+    r"(?:"
+    r"नौकरी.{0,40}(?:चुना गया|चुनी गई|चयनित)"
+    r"|"
+    r"(?:चुना गया|चुनी गई|चयनित).{0,40}नौकरी"
+    r"|"
+    r"(?:नौकरी|जॉब).{0,50}सिक्योरिटी फीस"
+    r"|"
+    r"सिक्योरिटी फीस.{0,50}(?:जमा|भुगतान)"
+    r")",
+    re.I | re.UNICODE,
+)
+
+    hindi_job_matches = _keyword_matches(
+    text, hindi_job_fee_pattern, NEGATION_PATTERN
+)
+
+    job_matches = list(dict.fromkeys(
+    _keyword_matches(text, job_pattern, NEGATION_PATTERN)
+    + hindi_job_matches
+))
+
     job_triggered = bool(job_matches)
     job_weight = 30 if job_triggered else 0
     raw_points += job_weight
