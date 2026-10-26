@@ -482,6 +482,25 @@ def analyze_rules(text: str, lang: str | None = None) -> dict:
     urgency_matches = _keyword_matches(
         text, urgency_pattern, NEGATION_PATTERN
     )
+    
+    hindi_coercion_pattern = re.compile(
+        r"(?:"
+        r"भुगतान\s+नहीं\s+करने\s+पर"
+        r"|ऑफर\s+रद्द\s+कर\s+दिया\s+जाएगा"
+        r"|जल्दी\s+करें"
+        r")",
+        re.I | re.UNICODE,
+    )
+
+    hindi_coercion_matches = [
+        match.group(0)
+        for match in hindi_coercion_pattern.finditer(text)
+    ]
+
+    urgency_matches = list(
+        dict.fromkeys(urgency_matches + hindi_coercion_matches)
+    )
+
 
     urgency_triggered = bool(urgency_matches)
     urgency_weight = 35 if urgency_triggered else 0
