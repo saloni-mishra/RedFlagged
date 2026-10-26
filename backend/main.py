@@ -265,18 +265,24 @@ async def extract_text(
 # Analyze notice
 # -----------------------------
 
-@app.post("/api/analyze", response_model=NoticeAnalysisResponse)
-def run_analysis(text: str = Form(...)):
+def _link_assessment(rule_results: dict) -> tuple[str, str]:
+    """Return (classification, explanation) from the URL rule breakdown row.
 
-    rule_results = analyze_rules(text)
-    language = rule_results.get("language", "en")
+    Only the URL row carries a non-empty "classification" ("suspicious",
+    "unverified", or "none"), so this is derived from the existing rule
+    results without duplicating rule logic.
+    """
+    for item in rule_results.get("rule_breakdown", []):
+        classification = item.get("classification", "")
+        if classification:
+            return classification, item.get("explanation", "")
+    return "", ""
 
-    try:
-        knowledge = retrieve_context(text)
-    except Exception as e:
-        print(f"Knowledge retrieval failed: {e}")
-        knowledge = ""
 
+def _build_prompt(
+    text: str, rule_results: dict, knowledge: str, language: str
+) -> str:
+    """Assemble the Gemini prompt from the deterministic rule results."""
     language_instruction = (
         "Write every user-facing field in Hindi using Devanagari script (for example: "
         "summary, red_flags[].indicator, red_flags[].explanation, safe_next_steps, "
@@ -286,6 +292,8 @@ def run_analysis(text: str = Form(...)):
         else "Write every user-facing field in English. Keep JSON keys, risk-level "
         "enum values (LOW/MEDIUM/HIGH), and URLs in English."
     )
+
+    link_classification, link_explanation = _link_assessment(rule_results)
 
     prompt = f"""
 Analyze the following notice for indicators of scam,
@@ -302,6 +310,20 @@ explicitly states there is no urgency or no payment required, do not
 describe this as a "contradiction" unless the deterministic rule checks
 also independently confirm urgency or payment indicators are present.
 
+URL ASSESSMENT GUIDANCE:
+The deterministic URL assessment is one of "suspicious" (deceptive
+indicators found), "unverified" (an external URL is present but no
+deceptive indicators were found), or "none" (no external URL). An
+"unverified" verdict is not a finding of maliciousness: if a URL is
+merely "unverified", do not claim the deterministic checks established
+that it is malicious or a confirmed phishing link. The surrounding
+message can still be suspicious because of impersonation, urgency,
+credential requests, or other evidence — assess those on their own
+merits. Explain uncertainty accurately and recommend independent
+verification when appropriate. Conversely, never present the absence of
+deceptive indicators, or the mention of a widely-known domain, as proof
+that a URL is safe.
+
 LANGUAGE INSTRUCTION:
 {language_instruction}
 
@@ -314,6 +336,7 @@ DETERMINISTIC CHECKS:
 - Risk Level: {rule_results['risk_level']}
 - Identified Flags: {rule_results['flags']}
 - Detected Language: {language}
+- URL Assessment: {link_classification} — {link_explanation}
 
 VERIFIED KNOWLEDGE & INSTITUTIONAL STANDARDS:
 {knowledge}
@@ -323,6 +346,23 @@ verification procedures.
 
 Return the result using the required JSON schema.
 """
+
+    return prompt
+
+
+@app.post("/api/analyze", response_model=NoticeAnalysisResponse)
+def run_analysis(text: str = Form(...)):
+
+    rule_results = analyze_rules(text)
+    language = rule_results.get("language", "en")
+
+    try:
+        knowledge = retrieve_context(text)
+    except Exception as e:
+        print(f"Knowledge retrieval failed: {e}")
+        knowledge = ""
+
+    prompt = _build_prompt(text, rule_results, knowledge, language)
 
     try:
         response = client.models.generate_content(
